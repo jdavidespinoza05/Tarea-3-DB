@@ -12,7 +12,6 @@
 
 USE Tarea3;
 GO
-
 CREATE OR ALTER PROCEDURE SP_ProcesarPagosXML
     @XmlPagos XML,
     @FechaOperacion DATE
