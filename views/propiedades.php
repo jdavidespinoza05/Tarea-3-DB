@@ -13,6 +13,8 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
 $page_title = "Consulta de Propiedades";
 $propiedades = [];
 $search_error = '';
+$search_finca = '';
+$search_id = '';
 
 // Si se envió el formulario de búsqueda
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -21,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // Se necesita al menos un criterio de búsqueda
     if (empty($search_finca) && empty($search_id)) {
-        $search_error = 'Debe ingresar el número de Finca o el ID del Propietario para buscar.';
+        $search_error = 'Debe ingresar el número de Finca o el ID de Documento del Propietario para buscar.';
     } else {
         $controller = new PropiedadController($db_conn);
         
@@ -29,7 +31,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!empty($search_finca)) {
             $propiedades = $controller->getPropiedadByFinca($search_finca);
         } elseif (!empty($search_id)) {
-            $propiedades = $controller->getPropiedadByIdPropietario($search_id);
+            // Buscamos por ValorDocumento (identificación)
+            $propiedades = $controller->getPropiedadByIdPropietario($search_id); 
         }
 
         if (empty($propiedades)) {
@@ -46,7 +49,6 @@ include 'partials/header.php';
     <h1><?php echo $page_title; ?></h1>
     <p>Utilice esta interfaz para buscar propiedades y ver el detalle de sus propietarios y servicios.</p>
 
-    <!-- Formulario de Búsqueda -->
     <div class="card" style="max-width: none;">
         <h2>Buscar Propiedad</h2>
         <?php if (!empty($search_error)): ?>
@@ -57,36 +59,41 @@ include 'partials/header.php';
             <div class="form-group" style="display: flex; gap: 20px;">
                 <div style="flex: 1;">
                     <label for="search_finca">Buscar por Número de Finca:</label>
-                    <input type="text" id="search_finca" name="search_finca" placeholder="Ej: F-001">
+                    <input type="text" id="search_finca" name="search_finca" required 
+                           placeholder="Ej: F-001" value="<?php echo htmlspecialchars($search_finca); ?>">
                 </div>
                 <div style="flex: 1;">
-                    <label for="search_id">Buscar por ID de Propietario:</label>
-                    <input type="text" id="search_id" name="search_id" placeholder="Ej: 10000001">
+                    <label for="search_id">Buscar por ID de Documento de Propietario (ValorDocumento):</label>
+                    <input type="text" id="search_id" name="search_id" required
+                           placeholder="Ej: 10000001" value="<?php echo htmlspecialchars($search_id); ?>">
                 </div>
             </div>
             <button type="submit" class="btn btn-primary">Buscar Propiedades</button>
         </form>
     </div>
 
-    <!-- Resultados de la Búsqueda -->
     <?php if (!empty($propiedades)): ?>
-        <h2 style="margin-top: 30px;">Resultados de la Búsqueda</h2>
-        <div style="display: grid; grid-template-columns: 1fr; gap: 20px;">
+        <h2 style="margin-top: 30px;">Resultados de la Búsqueda (<?php echo count($propiedades); ?> Encontradas)</h2>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
         <?php foreach ($propiedades as $propiedad): ?>
             <div class="card">
-                <h3>Propiedad Finca: <?php echo htmlspecialchars($propiedad['NumeroFinca']); ?></h3>
-                <p><strong>ID Interno:</strong> <?php echo htmlspecialchars($propiedad['PropiedadId']); ?></p>
-                <p><strong>Área (m²):</strong> <?php echo htmlspecialchars($propiedad['Area']); ?></p>
-                <p><strong>Uso:</strong> <?php echo htmlspecialchars($propiedad['TipoUso']); ?></p>
-                <p><strong>Dirección:</strong> <?php echo htmlspecialchars($propiedad['Direccion']); ?></p>
+                <h3>Finca: <?php echo htmlspecialchars($propiedad['NumeroFinca']); ?></h3>
                 
-                <h4 style="margin-top: 15px; border-bottom: 1px solid #ddd; padding-bottom: 5px;">Propietarios Asociados</h4>
-                <!-- Aquí se listaría el detalle de propietarios. Por ahora, solo indicamos el PropietarioID. -->
-                <p>Propietarios IDs: <?php echo htmlspecialchars($propiedad['PropietarioIDs'] ?? 'N/A'); ?></p> 
+                <div class="info-grid">
+                    <p><strong>ID Interno:</strong> <?php echo htmlspecialchars($propiedad['PropiedadId']); ?></p>
+                    <p><strong>Medidor:</strong> <?php echo htmlspecialchars($propiedad['NumeroMedidor']); ?></p>
+                    <p><strong>Área (m²):</strong> <?php echo htmlspecialchars(number_format($propiedad['MetrosCuadrados'], 2)); ?></p>
+                    <p><strong>Valor Fiscal:</strong> ₡ <?php echo htmlspecialchars(number_format($propiedad['ValorFiscal'], 2)); ?></p>
+                    <p><strong>Uso:</strong> <?php echo htmlspecialchars($propiedad['TipoUso']); ?></p>
+                    <p><strong>Zona:</strong> <?php echo htmlspecialchars($propiedad['TipoZona']); ?></p>
+                    <p class="span-2"><strong>Fecha Registro:</strong> <?php echo htmlspecialchars($propiedad['FechaRegistro']); ?></p>
+                </div>
                 
-                <h4 style="margin-top: 15px; border-bottom: 1px solid #ddd; padding-bottom: 5px;">Facturación</h4>
-                <!-- En el Paso 4, mostraremos el enlace para ver/pagar facturas -->
-                <a href="facturas_pendientes.php?finca=<?php echo urlencode($propiedad['NumeroFinca']); ?>" class="btn btn-primary" style="width: auto; margin-top: 10px; background-color: var(--success-color);">Ver Facturas Pendientes</a>
+                <h4 style="margin-top: 15px; border-bottom: 1px solid #ddd; padding-bottom: 5px;">Propietarios (Activos)</h4>
+                <p style="font-size: 0.9em;"><?php echo nl2br(htmlspecialchars($propiedad['Propietarios'] ?? 'N/A')); ?></p> 
+                
+                <h4 style="margin-top: 15px; border-bottom: 1px solid #ddd; padding-bottom: 5px;">Acciones</h4>
+                <a href="facturas_pendientes.php?finca=<?php echo urlencode($propiedad['NumeroFinca']); ?>" class="btn btn-primary" style="width: auto; margin-top: 10px; background-color: var(--success-color);">Pagar Recibo más Viejo</a>
             </div>
         <?php endforeach; ?>
         </div>
@@ -94,5 +101,4 @@ include 'partials/header.php';
 
 </div>
 
-<!-- Incluimos el footer para cerrar la etiqueta body/html si es necesario -->
 <?php include 'partials/footer.php'; ?>
