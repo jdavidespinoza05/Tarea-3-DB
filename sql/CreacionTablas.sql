@@ -1,347 +1,309 @@
-SET NOCOUNT ON;
+/* ============================================================
+   RECREAR BASE DE DATOS
+   ============================================================ */
+
+USE master;
 GO
 
-IF NOT EXISTS(SELECT 1 FROM sys.schemas WHERE name = 'dbo')
-  EXEC('CREATE SCHEMA dbo');
+DECLARE @kill varchar(8000) = '';
+
+SELECT @kill = @kill + 'KILL ' + CONVERT(varchar(5), session_id) + ';'
+FROM sys.dm_exec_sessions
+WHERE database_id = DB_ID('Tarea3');
+
+EXEC(@kill);
 GO
 
-CREATE TABLE TipoUsoPropiedad (
-  TipoUsoPropiedadID TINYINT PRIMARY KEY,
-  Nombre NVARCHAR(100) NOT NULL
-);
 
-CREATE TABLE TipoZonaPropiedad (
-  TipoZonaPropiedadID TINYINT PRIMARY KEY,
-  Nombre NVARCHAR(100) NOT NULL
-);
-
-CREATE TABLE TipoUsuario (
-  TipoUsuarioID TINYINT PRIMARY KEY,
-  Nombre NVARCHAR(100) NOT NULL
-);
-
-CREATE TABLE TipoMovimientoLecturaMedidor (
-  TipoMovimientoID TINYINT PRIMARY KEY,
-  Nombre NVARCHAR(100) NOT NULL
-);
-
-CREATE TABLE PeriodoMontoCC (
-  PeriodoMontoCCID TINYINT PRIMARY KEY,
-  Nombre NVARCHAR(50) NOT NULL,
-  QMeses TINYINT NOT NULL
-);
-
-CREATE TABLE TipoMontoCC (
-  TipoMontoCCID TINYINT PRIMARY KEY,
-  Nombre NVARCHAR(50) NOT NULL
-);
-
-CREATE TABLE TipoMedioPago (
-  TipoMedioPagoID TINYINT PRIMARY KEY,
-  Nombre NVARCHAR(50) NOT NULL
-);
-
-
-CREATE TABLE Persona (
-  PersonaID INT IDENTITY(1,1) PRIMARY KEY,
-  ValorDocumentoIdentidad VARCHAR(50) NOT NULL UNIQUE,
-  Nombre NVARCHAR(200) NOT NULL,
-  Email NVARCHAR(100) NULL,
-  Telefono1 VARCHAR(20) NULL,
-  Telefono2 VARCHAR(20) NULL,
-  EsJuridica BIT NOT NULL DEFAULT(0),
-  FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-);
-
-
-CREATE TABLE Propiedad (
-  PropiedadID INT IDENTITY(1,1) PRIMARY KEY,
-  NumeroFinca VARCHAR(50) NOT NULL UNIQUE,
-  MetrosCuadrados DECIMAL(12,2) NOT NULL,
-  TipoUsoPropiedadID TINYINT NOT NULL,
-  TipoZonaPropiedadID TINYINT NOT NULL,
-  ValorFiscal DECIMAL(18,2) NOT NULL,
-  FechaRegistro DATE NOT NULL,
-  SaldoM3 DECIMAL(12,3) NOT NULL DEFAULT(0.0),
-  SaldoM3UltimaFactura DECIMAL(12,3) NOT NULL DEFAULT(0.0),
-  FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-  Activo BIT NOT NULL DEFAULT(1),
-  CONSTRAINT FK_Propiedad_TipoUso FOREIGN KEY (TipoUsoPropiedadID) REFERENCES TipoUsoPropiedad(TipoUsoPropiedadID),
-  CONSTRAINT FK_Propiedad_TipoZona FOREIGN KEY (TipoZonaPropiedadID) REFERENCES TipoZonaPropiedad(TipoZonaPropiedadID)
-);
-
-/* --------------------
-   PropiedadPropietario (histórico)
-   -------------------- */
-CREATE TABLE PropiedadPropietario (
-  PropiedadPropietarioID INT IDENTITY(1,1) PRIMARY KEY,
-  PropiedadID INT NOT NULL,
-  PersonaID INT NOT NULL,
-  FechaInicio DATE NOT NULL,
-  FechaFin DATE NULL,
-  TipoAsociacionID TINYINT NULL,
-  CONSTRAINT FK_PP_Propiedad FOREIGN KEY (PropiedadID) REFERENCES Propiedad(PropiedadID),
-  CONSTRAINT FK_PP_Persona FOREIGN KEY (PersonaID) REFERENCES Persona(PersonaID)
-);
-
-/* --------------------
-   Usuario
-   -------------------- */
-CREATE TABLE Usuario (
-  UsuarioID INT IDENTITY(1,1) PRIMARY KEY,
-  PersonaID INT NULL,
-  Username NVARCHAR(100) NOT NULL UNIQUE,
-  PasswordHash VARBINARY(256) NOT NULL,
-  TipoUsuarioID TINYINT NOT NULL,
-  FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-  Activo BIT NOT NULL DEFAULT(1),
-  CONSTRAINT FK_Usuario_Persona FOREIGN KEY (PersonaID) REFERENCES Persona(PersonaID),
-  CONSTRAINT FK_Usuario_TipoUsuario FOREIGN KEY (TipoUsuarioID) REFERENCES TipoUsuario(TipoUsuarioID)
-);
-
-/* --------------------
-   UsuarioPropiedad
-   -------------------- */
-CREATE TABLE UsuarioPropiedad (
-  UsuarioPropiedadID INT IDENTITY(1,1) PRIMARY KEY,
-  UsuarioID INT NOT NULL,
-  PropiedadID INT NOT NULL,
-  FechaInicio DATE NOT NULL,
-  FechaFin DATE NULL,
-  CONSTRAINT FK_UP_Usuario FOREIGN KEY (UsuarioID) REFERENCES Usuario(UsuarioID),
-  CONSTRAINT FK_UP_Propiedad FOREIGN KEY (PropiedadID) REFERENCES Propiedad(PropiedadID)
-);
-
-/* --------------------
-   Medidor y MovimientoMedidor
-   -------------------- */
-CREATE TABLE Medidor (
-  MedidorID INT IDENTITY(1,1) PRIMARY KEY,
-  NumeroMedidor VARCHAR(50) NOT NULL UNIQUE,
-  PropiedadID INT NOT NULL,
-  SaldoM3 DECIMAL(12,3) NOT NULL DEFAULT(0.0),
-  FechaCreacion DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-  CONSTRAINT FK_Medidor_Propiedad FOREIGN KEY (PropiedadID) REFERENCES Propiedad(PropiedadID)
-);
-
-CREATE TABLE MovimientoMedidor (
-  MovimientoMedidorID INT IDENTITY(1,1) PRIMARY KEY,
-  MedidorID INT NOT NULL,
-  FechaOperacion DATE NOT NULL,
-  TipoMovimientoID TINYINT NOT NULL,
-  Valor DECIMAL(12,3) NOT NULL,
-  Diferencia DECIMAL(12,3) NULL,
-  Observaciones NVARCHAR(500) NULL,
-  UsuarioRegistro NVARCHAR(100) NULL,
-  CONSTRAINT FK_MM_Medidor FOREIGN KEY (MedidorID) REFERENCES Medidor(MedidorID),
-  CONSTRAINT FK_MM_TipoMovimiento FOREIGN KEY (TipoMovimientoID) REFERENCES TipoMovimientoLecturaMedidor(TipoMovimientoID)
-);
-
-/* --------------------
-   ConceptoCobro (CC) - IDs cargados desde XML (no identity)
-   -------------------- */
-CREATE TABLE ConceptoCobro (
-  CCID INT PRIMARY KEY,
-  Nombre NVARCHAR(200) NOT NULL,
-  PeriodoMontoCCID TINYINT NOT NULL,
-  TipoMontoCCID TINYINT NOT NULL,
-  ValorMinimo DECIMAL(18,2) NULL,
-  ValorMinimoM3 DECIMAL(12,3) NULL,
-  ValorFijo DECIMAL(18,2) NULL,
-  CostoM3 DECIMAL(18,2) NULL,
-  ValorPorcentual DECIMAL(10,6) NULL,
-  ValorM2Minimo DECIMAL(12,2) NULL,
-  ValorTractosM2 DECIMAL(12,2) NULL,
-  OtrosParametros NVARCHAR(MAX) NULL,
-  CONSTRAINT FK_CC_Periodo FOREIGN KEY (PeriodoMontoCCID) REFERENCES PeriodoMontoCC(PeriodoMontoCCID),
-  CONSTRAINT FK_CC_TipoMonto FOREIGN KEY (TipoMontoCCID) REFERENCES TipoMontoCC(TipoMontoCCID)
-);
-
-/* --------------------
-   PropiedadCC (qué CC aplican a una propiedad)
-   -------------------- */
-CREATE TABLE PropiedadCC (
-  PropiedadCCID INT IDENTITY(1,1) PRIMARY KEY,
-  PropiedadID INT NOT NULL,
-  CCID INT NOT NULL,
-  FechaInicio DATE NOT NULL,
-  FechaFin DATE NULL,
-  Activo BIT NOT NULL DEFAULT(1),
-  ConfiguracionLocal NVARCHAR(MAX) NULL,
-  CONSTRAINT FK_PC_Propiedad FOREIGN KEY (PropiedadID) REFERENCES Propiedad(PropiedadID),
-  CONSTRAINT FK_PC_CC FOREIGN KEY (CCID) REFERENCES ConceptoCobro(CCID)
-);
-
-/* --------------------
-   Factura y FacturaDetalle
-   -------------------- */
-CREATE TABLE Factura (
-  FacturaID INT IDENTITY(1,1) PRIMARY KEY,
-  NumeroFactura BIGINT NOT NULL UNIQUE,
-  PropiedadID INT NOT NULL,
-  FechaEmision DATE NOT NULL,
-  FechaVencimiento DATE NOT NULL,
-  TotalAPagarOriginal DECIMAL(18,2) NOT NULL,
-  TotalAPagarFinal DECIMAL(18,2) NOT NULL,
-  EstadoID TINYINT NOT NULL DEFAULT(1),
-  GeneradaPorProceso BIT NOT NULL DEFAULT(1),
-  FechaPago DATETIME2 NULL,
-  UsuarioPagoID INT NULL,
-  CONSTRAINT FK_Factura_Propiedad FOREIGN KEY (PropiedadID) REFERENCES Propiedad(PropiedadID),
-  CONSTRAINT FK_Factura_UsuarioPago FOREIGN KEY (UsuarioPagoID) REFERENCES Usuario(UsuarioID)
-);
-
-CREATE TABLE FacturaDetalle (
-  FacturaDetalleID INT IDENTITY(1,1) PRIMARY KEY,
-  FacturaID INT NOT NULL,
-  CCID INT NOT NULL,
-  Descripcion NVARCHAR(300) NULL,
-  Monto DECIMAL(18,2) NOT NULL,
-  Cantidad DECIMAL(12,3) NULL,
-  ReferenciaID INT NULL,
-  CONSTRAINT FK_FD_Factura FOREIGN KEY (FacturaID) REFERENCES Factura(FacturaID),
-  CONSTRAINT FK_FD_CC FOREIGN KEY (CCID) REFERENCES ConceptoCobro(CCID)
-);
-
-/* --------------------
-   Pago y Comprobante
-   -------------------- */
-CREATE TABLE Pago (
-  PagoID INT IDENTITY(1,1) PRIMARY KEY,
-  FacturaID INT NOT NULL,
-  FechaPago DATETIME2 NOT NULL,
-  MontoPagado DECIMAL(18,2) NOT NULL,
-  TipoMedioPagoID TINYINT NOT NULL,
-  NumeroReferenciaComprobantePago NVARCHAR(100) NULL,
-  UsuarioRegistroID INT NULL,
-  CONSTRAINT FK_Pago_Factura FOREIGN KEY (FacturaID) REFERENCES Factura(FacturaID),
-  CONSTRAINT FK_Pago_TipoMedio FOREIGN KEY (TipoMedioPagoID) REFERENCES TipoMedioPago(TipoMedioPagoID),
-  CONSTRAINT FK_Pago_UsuarioRegistro FOREIGN KEY (UsuarioRegistroID) REFERENCES Usuario(UsuarioID)
-);
-
-CREATE TABLE ComprobantePago (
-  ComprobanteID INT IDENTITY(1,1) PRIMARY KEY,
-  PagoID INT NOT NULL,
-  CodigoComprobante NVARCHAR(100) NOT NULL UNIQUE,
-  FechaEmision DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-  CONSTRAINT FK_CP_Pago FOREIGN KEY (PagoID) REFERENCES Pago(PagoID)
-);
-
-/* --------------------
-   OrdenCorte y OrdenReconexión
-   -------------------- */
-CREATE TABLE OrdenCorte (
-  OrdenCorteID INT IDENTITY(1,1) PRIMARY KEY,
-  PropiedadID INT NOT NULL,
-  FacturaID INT NOT NULL,
-  FechaGeneracion DATE NOT NULL,
-  EstadoID TINYINT NOT NULL DEFAULT(1),
-  FechaCambioEstado DATE NULL,
-  CONSTRAINT FK_OC_Propiedad FOREIGN KEY (PropiedadID) REFERENCES Propiedad(PropiedadID),
-  CONSTRAINT FK_OC_Factura FOREIGN KEY (FacturaID) REFERENCES Factura(FacturaID)
-);
-
-CREATE TABLE OrdenReconexion (
-  OrdenReconID INT IDENTITY(1,1) PRIMARY KEY,
-  OrdenCorteID INT NOT NULL,
-  FacturaID INT NOT NULL,
-  FechaGeneracion DATE NOT NULL,
-  UsuarioGeneraID INT NULL,
-  CONSTRAINT FK_OR_OrdenCorte FOREIGN KEY (OrdenCorteID) REFERENCES OrdenCorte(OrdenCorteID),
-  CONSTRAINT FK_OR_Factura FOREIGN KEY (FacturaID) REFERENCES Factura(FacturaID),
-  CONSTRAINT FK_OR_Usuario FOREIGN KEY (UsuarioGeneraID) REFERENCES Usuario(UsuarioID)
-);
-
-/* --------------------
-   ParametrosSistema
-   -------------------- */
-CREATE TABLE ParametrosSistema (
-  ParametroClave NVARCHAR(100) PRIMARY KEY,
-  ParametroValor NVARCHAR(200) NOT NULL,
-  FechaActualizacion DATETIME2 NULL
-);
-
-/* --------------------
-   Índices recomendados
-   -------------------- */
-CREATE INDEX IX_Factura_Propiedad_Estado_Vencimiento ON Factura(PropiedadID, EstadoID, FechaVencimiento);
-CREATE INDEX IX_MovimientoMedidor_Medidor_Fecha ON MovimientoMedidor(MedidorID, FechaOperacion);
-CREATE INDEX IX_PropiedadCC_Propiedad ON PropiedadCC(PropiedadID);
-CREATE INDEX IX_Pago_Factura_Fecha ON Pago(FacturaID, FechaPago);
-
-/* --------------------
-   Trigger: al insertar Propiedad -> asignar CCs por defecto
-   NOTA: Este trigger asume que los CC con IDs conocidos existen en ConceptoCobro
-         (p.ej. CC Agua = 1, Impuesto = 2, Recoleccion=3, Mantenimiento=7)
-   Ajusta los IDs según el XML de catálogos.
-   -------------------- */
+ALTER DATABASE Tarea3 SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+DROP DATABASE Tarea3;
 GO
-CREATE OR ALTER TRIGGER TR_Propiedad_Insert
-ON Propiedad
-AFTER INSERT
-AS
+
+IF DB_ID('Tarea3') IS NOT NULL
 BEGIN
-  SET NOCOUNT ON;
-  -- Parche: usar tabla temporal de IDs por defecto (ajustar según catálogo real)
-  DECLARE @CC_Agua INT = 1;
-  DECLARE @CC_Impuesto INT = 2;
-  DECLARE @CC_Recoleccion INT = 3;
-  DECLARE @CC_Mantenimiento INT = 7;
-
-  INSERT INTO PropiedadCC(PropiedadID, CCID, FechaInicio, Activo)
-  SELECT p.PropiedadID, @CC_Agua, CAST(GETDATE() AS DATE), 1
-  FROM inserted p;
-
-  INSERT INTO PropiedadCC(PropiedadID, CCID, FechaInicio, Activo)
-  SELECT p.PropiedadID, @CC_Impuesto, CAST(GETDATE() AS DATE), 1
-  FROM inserted p;
-
-  -- Recoleccion si TipoZonaPropiedad != agrícola (suponiendo id 2 = agricola)
-  INSERT INTO PropiedadCC(PropiedadID, CCID, FechaInicio, Activo)
-  SELECT p.PropiedadID, @CC_Recoleccion, CAST(GETDATE() AS DATE), 1
-  FROM inserted p
-  WHERE p.TipoZonaPropiedadID <> 2;
-
-  -- Mantenimiento si TipoUso es residencial(1) o comercial(2)
-  INSERT INTO PropiedadCC(PropiedadID, CCID, FechaInicio, Activo)
-  SELECT p.PropiedadID, @CC_Mantenimiento, CAST(GETDATE() AS DATE), 1
-  FROM inserted p
-  WHERE p.TipoUsoPropiedadID IN (1,2);
+    ALTER DATABASE Tarea3 SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE Tacrea3;
 END;
 GO
 
-
-INSERT INTO TipoUsoPropiedad(TipoUsoPropiedadID, Nombre) VALUES
-(1,'Habitacion'),(2,'Comercial'),(3,'Industrial'),(4,'Lote Baldio'),(5,'Agricola');
-
-INSERT INTO TipoZonaPropiedad(TipoZonaPropiedadID, Nombre) VALUES
-(1,'Residencial'),(2,'Agricola'),(3,'Bosque'),(4,'Zona Industrial'),(5,'Zona Comercial');
-
-INSERT INTO TipoUsuario(TipoUsuarioID, Nombre) VALUES
-(1,'Administrador'),(2,'Propietario');
-
-INSERT INTO TipoMovimientoLecturaMedidor(TipoMovimientoID, Nombre) VALUES
-(1,'Lectura'),(2,'Ajuste Credito'),(3,'Ajuste Debito');
-
-INSERT INTO PeriodoMontoCC(PeriodoMontoCCID, Nombre, QMeses) VALUES
-(1,'Mensual',1),(2,'Trimestral',3),(4,'Semestral',6),(5,'Anual',12),(6,'Cobro Unico',1),(7,'Diario Intereses',30);
-
-INSERT INTO TipoMontoCC(TipoMontoCCID, Nombre) VALUES
-(1,'Monto Fijo'),(2,'Monto Variable'),(3,'Monto x Porcentaje');
-
-INSERT INTO TipoMedioPago(TipoMedioPagoID, Nombre) VALUES
-(1,'Efectivo'),(2,'Tarjeta');
-
-INSERT INTO ConceptoCobro(CCID, Nombre, PeriodoMontoCCID, TipoMontoCCID, ValorMinimo, ValorMinimoM3, CostoM3, ValorPorcentual, ValorFijo, ValorM2Minimo, ValorTractosM2)
-VALUES
-(1,'ConsumoAgua',1,2,5000,30,1000,NULL,NULL,NULL,NULL),
-(2,'ImpuestoPropiedad',5,3,NULL,NULL,NULL,0.01,NULL,NULL,NULL),
-(3,'RecoleccionBasura',1,1,150,NULL,NULL,NULL,300,400,200),
-(5,'Reconexion',6,1,NULL,NULL,NULL,NULL,30000,NULL,NULL),
-(6,'InteresesMoratorios',7,3,NULL,NULL,NULL,0.04,NULL,NULL,NULL),
-(7,'MantenimientoParques',1,1,NULL,NULL,NULL,NULL,10000,NULL,NULL);
-
+CREATE DATABASE Tarea3;
 GO
 
-PRINT 'DDL creado. Revisa los IDs de ConceptoCobro y catálogos según tu XML de prueba antes de ejecutar procesos masivos.';
+USE Tarea3;
 GO
+
+/* ============================================================
+   1. CATÁLOGOS
+   ============================================================ */
+
+CREATE TABLE TipoMovimientoLecturaMedidor(
+    TipoMovimientoId INT PRIMARY KEY,   -- 1: Lectura, 2: Ajuste Crédito, 3: Ajuste Débito
+    Nombre VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE TipoUsoPropiedad(
+    TipoUsoId INT PRIMARY KEY,          -- 1 habitación, 2 comercial, etc.
+    Nombre VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE TipoZonaPropiedad(
+    TipoZonaId INT PRIMARY KEY,         -- 1 residencial, 2 agrícola, etc.
+    Nombre VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE TipoUsuario(
+    TipoUsuarioId INT PRIMARY KEY,      -- 1: Administrador, 2: Propietario
+    Nombre VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE TipoAsociacion(
+    TipoAsociacionId INT PRIMARY KEY,   -- 1: Asociar, 2: Desasociar
+    Nombre VARCHAR(30) NOT NULL
+);
+
+CREATE TABLE TipoMedioPago(
+    TipoMedioPagoId INT PRIMARY KEY,    -- 1: Efectivo, 2: Tarjeta
+    Nombre VARCHAR(30) NOT NULL
+);
+
+CREATE TABLE PeriodoMontoCC(
+    PeriodoMontoCCId INT PRIMARY KEY,   -- 1 mensual, 2 trimestral, etc.
+    Nombre VARCHAR(50) NOT NULL,
+    QMeses INT NOT NULL
+);
+
+CREATE TABLE TipoMontoCC(
+    TipoMontoCCId INT PRIMARY KEY,      -- 1 monto fijo, 2 variable, 3 porcentaje
+    Nombre VARCHAR(50) NOT NULL
+);
+
+/* ============================================================
+   2. PERSONAS, USUARIOS, MEDIDOR Y PROPIEDAD
+   ============================================================ */
+
+CREATE TABLE Persona(
+    PersonaId INT IDENTITY PRIMARY KEY,
+    ValorDocumento VARCHAR(20) NOT NULL UNIQUE,  -- viene del XML
+    Nombre VARCHAR(100) NOT NULL,
+    Email VARCHAR(100) NULL,
+    Telefono VARCHAR(20) NULL
+);
+
+CREATE TABLE Usuario(
+    UsuarioId INT IDENTITY PRIMARY KEY,
+    PersonaId INT NOT NULL,
+    TipoUsuarioId INT NOT NULL,
+    NombreUsuario VARCHAR(50) NOT NULL UNIQUE,
+    ContrasenaHash VARCHAR(200) NOT NULL,
+    FOREIGN KEY (PersonaId) REFERENCES Persona(PersonaId),
+    FOREIGN KEY (TipoUsuarioId) REFERENCES TipoUsuario(TipoUsuarioId)
+);
+
+CREATE TABLE Medidor(
+    MedidorId INT IDENTITY PRIMARY KEY,
+    NumeroMedidor VARCHAR(20) NOT NULL UNIQUE,  -- viene del XML
+    SaldoM3 DECIMAL(18,2) NOT NULL DEFAULT 0    -- saldo acumulado del medidor
+);
+
+CREATE TABLE Propiedad(
+    PropiedadId INT IDENTITY PRIMARY KEY,
+    NumeroFinca VARCHAR(20) NOT NULL UNIQUE,    -- viene del XML
+    MedidorId INT NOT NULL,                     -- 1 medidor por propiedad
+    MetrosCuadrados DECIMAL(10,2) NOT NULL,
+    TipoUsoId INT NOT NULL,
+    TipoZonaId INT NOT NULL,
+    ValorFiscal DECIMAL(18,2) NOT NULL,
+    FechaRegistro DATE NOT NULL,
+    -- campos para consumo de agua
+    SaldoM3UltimaFactura DECIMAL(18,2) NOT NULL DEFAULT 0,
+    FOREIGN KEY (MedidorId) REFERENCES Medidor(MedidorId),
+    FOREIGN KEY (TipoUsoId) REFERENCES TipoUsoPropiedad(TipoUsoId),
+    FOREIGN KEY (TipoZonaId) REFERENCES TipoZonaPropiedad(TipoZonaId)
+);
+
+/* ============================================================
+   3. RELACIÓN PROPIEDAD - PERSONA (PROPIETARIOS)
+   ============================================================ */
+
+CREATE TABLE PropiedadPropietario(
+    PropiedadPropietarioId INT IDENTITY PRIMARY KEY,
+    PropiedadId INT NOT NULL,
+    PersonaId INT NOT NULL,
+    FechaInicio DATE NOT NULL,
+    FechaFin DATE NULL,
+    FOREIGN KEY (PropiedadId) REFERENCES Propiedad(PropiedadId),
+    FOREIGN KEY (PersonaId) REFERENCES Persona(PersonaId)
+);
+
+/* ============================================================
+   4. RELACIÓN USUARIO (NO-ADMIN) - PROPIEDAD (PORTAL)
+   ============================================================ */
+
+CREATE TABLE UsuarioPropiedad(
+    UsuarioPropiedadId INT IDENTITY PRIMARY KEY,
+    UsuarioId INT NOT NULL,
+    PropiedadId INT NOT NULL,
+    FOREIGN KEY (UsuarioId) REFERENCES Usuario(UsuarioId),
+    FOREIGN KEY (PropiedadId) REFERENCES Propiedad(PropiedadId),
+    CONSTRAINT UQ_UsuarioPropiedad UNIQUE (UsuarioId, PropiedadId)
+);
+
+/* ============================================================
+   5. CONCEPTOS DE COBRO (CC) Y ASOCIACIÓN A PROPIEDADES
+   ============================================================ */
+
+CREATE TABLE ConceptoCobro(
+    CCId INT PRIMARY KEY,                     -- viene del XML de CCs
+    Nombre VARCHAR(100) NOT NULL,
+    PeriodoMontoCCId INT NOT NULL,
+    TipoMontoCCId INT NOT NULL,
+    ValorMinimo DECIMAL(18,2) NULL,
+    ValorMinimoM3 DECIMAL(18,2) NULL,
+    ValorFijoM3Adicional DECIMAL(18,2) NULL,
+    ValorPorcentual DECIMAL(10,5) NULL,
+    ValorFijo DECIMAL(18,2) NULL,
+    ValorM2Minimo DECIMAL(18,2) NULL,
+    ValorTractosM2 DECIMAL(18,2) NULL,
+    FOREIGN KEY (PeriodoMontoCCId) REFERENCES PeriodoMontoCC(PeriodoMontoCCId),
+    FOREIGN KEY (TipoMontoCCId) REFERENCES TipoMontoCC(TipoMontoCCId)
+);
+
+CREATE TABLE PropiedadCC(
+    PropiedadCCId INT IDENTITY PRIMARY KEY,
+    PropiedadId INT NOT NULL,
+    CCId INT NOT NULL,
+    Activo BIT NOT NULL DEFAULT 1,
+    FechaInicio DATE NOT NULL,
+    FechaFin DATE NULL,
+    FOREIGN KEY (PropiedadId) REFERENCES Propiedad(PropiedadId),
+    FOREIGN KEY (CCId) REFERENCES ConceptoCobro(CCId),
+    CONSTRAINT UQ_Propiedad_CC UNIQUE (PropiedadId, CCId, FechaInicio)
+);
+
+/* ============================================================
+   6. MOVIMIENTOS DE MEDIDOR (LECTURAS / AJUSTES)
+   ============================================================ */
+
+CREATE TABLE MovimientoMedidor(
+    MovimientoMedidorId INT IDENTITY PRIMARY KEY,
+    MedidorId INT NOT NULL,
+    TipoMovimientoId INT NOT NULL,
+    FechaOperacion DATE NOT NULL,
+    Valor DECIMAL(18,2) NOT NULL,           -- valor usado para variación o ajuste
+    FOREIGN KEY (MedidorId) REFERENCES Medidor(MedidorId),
+    FOREIGN KEY (TipoMovimientoId) REFERENCES TipoMovimientoLecturaMedidor(TipoMovimientoId)
+);
+
+/* ============================================================
+   7. FACTURAS Y DETALLE DE FACTURAS
+   ============================================================ */
+
+CREATE TABLE Factura(
+    FacturaId INT IDENTITY PRIMARY KEY,
+    PropiedadId INT NOT NULL,
+    FechaFactura DATE NOT NULL,
+    FechaLimitePago DATE NOT NULL,
+    FechaLimiteCorte DATE NOT NULL,
+    Estado INT NOT NULL DEFAULT 1,  -- 1: Pendiente, 2: Pagado normal
+    TotalAPagarOriginal DECIMAL(18,2) NOT NULL,
+    TotalAPagarFinal DECIMAL(18,2) NOT NULL,
+    FOREIGN KEY (PropiedadId) REFERENCES Propiedad(PropiedadId)
+);
+
+CREATE TABLE FacturaDetalle(
+    FacturaDetalleId INT IDENTITY PRIMARY KEY,
+    FacturaId INT NOT NULL,
+    CCId INT NOT NULL,
+    Monto DECIMAL(18,2) NOT NULL,
+    FOREIGN KEY (FacturaId) REFERENCES Factura(FacturaId),
+    FOREIGN KEY (CCId) REFERENCES ConceptoCobro(CCId)
+);
+
+/* ============================================================
+   8. PAGOS Y COMPROBANTES
+   ============================================================ */
+
+CREATE TABLE Pago(
+    PagoId INT IDENTITY PRIMARY KEY,
+    FacturaId INT NOT NULL,
+    FechaPago DATE NOT NULL,
+    TipoMedioPagoId INT NOT NULL,
+    NumeroReferencia VARCHAR(50) NULL,      -- viene del XML: NumeroReferenciaComprobantePago
+    MontoPagado DECIMAL(18,2) NOT NULL,
+    FOREIGN KEY (FacturaId) REFERENCES Factura(FacturaId),
+    FOREIGN KEY (TipoMedioPagoId) REFERENCES TipoMedioPago(TipoMedioPagoId)
+);
+
+CREATE TABLE ComprobantePago(
+    ComprobantePagoId INT IDENTITY PRIMARY KEY,
+    PagoId INT NOT NULL,
+    Fecha DATE NOT NULL,
+    NumeroReferencia VARCHAR(50) NULL,
+    Monto DECIMAL(18,2) NOT NULL,
+    FOREIGN KEY (PagoId) REFERENCES Pago(PagoId)
+);
+
+/* ============================================================
+   9. ÓRDENES DE CORTE Y RECONEXIÓN
+   ============================================================ */
+
+CREATE TABLE OrdenCorte(
+    OrdenCorteId INT IDENTITY PRIMARY KEY,
+    PropiedadId INT NOT NULL,
+    FacturaId INT NOT NULL,      -- factura que generó la corta
+    FechaOrden DATE NOT NULL,
+    Estado INT NOT NULL DEFAULT 1, -- 1: Pago reconexión pendiente, 2: Pago reconexión realizado
+    FOREIGN KEY (PropiedadId) REFERENCES Propiedad(PropiedadId),
+    FOREIGN KEY (FacturaId) REFERENCES Factura(FacturaId)
+);
+
+CREATE TABLE OrdenReconexion(
+    OrdenReconexionId INT IDENTITY PRIMARY KEY,
+    OrdenCorteId INT NOT NULL,
+    FechaReconexion DATE NOT NULL,
+    FOREIGN KEY (OrdenCorteId) REFERENCES OrdenCorte(OrdenCorteId)
+);
+
+/* ============================================================
+   10. PARÁMETROS DEL SISTEMA
+   ============================================================ */
+
+CREATE TABLE ParametrosSistema(
+    ParametroId INT IDENTITY PRIMARY KEY,
+    Nombre VARCHAR(100) NOT NULL,
+    ValorInt INT NULL,
+    ValorDecimal DECIMAL(18,2) NULL,
+    ValorTexto VARCHAR(200) NULL
+);
+
+/* ============================================================
+   11. (OPCIONAL) VALORES INICIALES DE CATÁLOGOS
+   ============================================================ */
+
+INSERT INTO TipoMovimientoLecturaMedidor (TipoMovimientoId, Nombre) VALUES
+(1, 'Lectura'), (2, 'Ajuste Crédito'), (3, 'Ajuste Débito');
+
+INSERT INTO TipoUsuario (TipoUsuarioId, Nombre) VALUES
+(1, 'Administrador'),
+(2, 'Propietario');
+
+INSERT INTO TipoAsociacion (TipoAsociacionId, Nombre) VALUES
+(1, 'Asociar'),
+(2, 'Desasociar');
+
+INSERT INTO TipoMedioPago (TipoMedioPagoId, Nombre) VALUES
+(1, 'Efectivo'),
+(2, 'Tarjeta bancaria');
+
+INSERT INTO PeriodoMontoCC (PeriodoMontoCCId, Nombre, QMeses) VALUES
+(1, 'Mensual', 1),
+(2, 'Trimestral', 3),
+(4, 'Semestral', 6),
+(5, 'Anual', 12),
+(6, 'Cobro único no recurrente', 1),
+(7, 'Diario intereses moratorios', 30);
+
+INSERT INTO TipoMontoCC (TipoMontoCCId, Nombre) VALUES
+(1, 'Monto fijo'),
+(2, 'Monto variable'),
+(3, 'Monto por porcentaje');
