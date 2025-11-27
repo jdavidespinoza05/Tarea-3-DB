@@ -73,7 +73,7 @@ include 'partials/header.php';
         $diasMora = $factura['DiasMora'];
         $monto = $factura['MontoActual'];
         // Cálculo visual de intereses (solo informativo, el real lo hace el controlador)
-        $interesEstimado = ($diasMora > 0) ? ($monto * 0.00033 * $diasMora) : 0;
+        $interesEstimado = ($diasMora > 0) ? ($monto * 0.001333 * $diasMora) : 0;
         $totalEstimado = $monto + $interesEstimado;
     ?>
     <div class="card" style="margin-top: 20px; border-left: 5px solid var(--primary-color);">
