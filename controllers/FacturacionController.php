@@ -1,133 +1,103 @@
 <?php
-/**
- * FacturacionController.php
- * Maneja la lógica de negocio para facturación y pagos.
- */
 class FacturacionController {
     private $db;
+    const CC_INTERES_ID = 6; // Ajusta este ID si en tu XML/BD es otro
 
-    // Constantes de Estado según tu esquema
-    const ESTADO_PENDIENTE = 1;
-    const ESTADO_PAGADO = 2;
-    
-    // ID del Concepto de Cobro para Intereses Moratorios (Asegúrate de que exista en tu BD o cámbialo)
-    // Se asume que existe un CC con ID 99 o similar para "Intereses Moratorios"
-    const CC_INTERES_MORATORIO = 10; // Ajusta este ID según tus datos del XML (ej: un ID que no choque)
-
-    public function __construct($db_connection) {
-        $this->db = $db_connection;
+    public function __construct($db) {
+        $this->db = $db;
     }
 
-    /**
-     * Obtiene la factura pendiente más antigua para un número de finca.
-     */
     public function getFacturaMasViejaPendiente($numeroFinca) {
-        $sql = "
-            SELECT TOP 1 
-                f.FacturaId, 
-                f.FechaFactura, 
-                f.FechaLimitePago, 
-                f.TotalAPagarFinal AS MontoActual,
-                f.TotalAPagarOriginal,
-                p.NumeroFinca,
-                -- Calcula días pasados desde la fecha límite
-                DATEDIFF(day, f.FechaLimitePago, CAST(GETDATE() AS DATE)) AS DiasMora
-            FROM Factura f
-            JOIN Propiedad p ON f.PropiedadId = p.PropiedadId
-            WHERE p.NumeroFinca = :finca AND f.Estado = :estado
-            ORDER BY f.FechaFactura ASC
-        ";
-
         try {
+            // Llamamos al SP nuevo
+            $sql = "EXEC SP_GetFacturaPendiente @NumeroFinca = :finca";
             $stmt = $this->db->prepare($sql);
-            $stmt->bindParam(':finca', $numeroFinca, PDO::PARAM_STR);
-            $stmt->bindValue(':estado', self::ESTADO_PENDIENTE, PDO::PARAM_INT);
+            $stmt->bindParam(':finca', $numeroFinca);
             $stmt->execute();
-            return $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            $resultado = $stmt->fetch(PDO::FETCH_ASSOC);
+            return $resultado ?: null; // Si no hay nada, devuelve null
+
         } catch (PDOException $e) {
-            error_log("Error al obtener factura: " . $e->getMessage());
+            error_log("Error trayendo factura: " . $e->getMessage());
             return null;
         }
     }
 
-    /**
-     * Realiza el pago de la factura más vieja pendiente.
-     * Aplica intereses moratorios si aplica.
-     */
-    public function pagarFacturaMasVieja($numeroFinca, $tipoMedioPagoId, $numeroReferencia) {
+    public function pagarFacturaMasVieja($numeroFinca, $medioPagoId, $referencia) {
         $factura = $this->getFacturaMasViejaPendiente($numeroFinca);
-
+        
         if (!$factura) {
-            return ['success' => false, 'message' => 'No hay facturas pendientes para la finca ' . htmlspecialchars($numeroFinca)];
+            return ['success' => false, 'message' => 'No se encontraron facturas pendientes.'];
         }
 
+        // Mapeamos los datos que vienen del SP
         $facturaId = $factura['FacturaId'];
-        $diasMora = $factura['DiasMora'];
-        $montoPagar = (float)$factura['MontoActual'];
-        
-        // Configuración de intereses (Ejemplo: 1% mensual = 0.033% diario aprox, ajusta según requerimiento)
-        $tasaDiaria = 0.00033; 
-        $interesAplicado = 0.0;
-        $hayInteres = false;
+        $monto = (float)$factura['MontoActual']; // Viene del SP
+        $diasMora = (int)$factura['DiasMora'];   // Viene del SP
 
         try {
             $this->db->beginTransaction();
 
-            // 1. Calcular e insertar Interés Moratorio si hay mora (> 0 días después de fecha límite)
+            // 1. Calcular Intereses si hay mora
             if ($diasMora > 0) {
-                $interesAplicado = round($montoPagar * $tasaDiaria * $diasMora, 2);
-                $montoPagar += $interesAplicado;
-                $hayInteres = true;
+                // Interés 4% mensual prorrateado
+                $interes = $monto * 0.04 * ($diasMora / 30);
+                $interes = round($interes, 2);
 
-                // Insertar detalle de factura por el interés
-                $sqlDetalle = "INSERT INTO FacturaDetalle (FacturaId, CCId, Monto) VALUES (:fid, :ccid, :monto)";
-                $stmtDet = $this->db->prepare($sqlDetalle);
-                $stmtDet->bindValue(':fid', $facturaId);
-                $stmtDet->bindValue(':ccid', self::CC_INTERES_MORATORIO);
-                $stmtDet->bindValue(':monto', $interesAplicado);
-                $stmtDet->execute();
+                if ($interes > 0) {
+                    // Insertar CC Interés
+                    $stmt = $this->db->prepare("INSERT INTO FacturaDetalle (FacturaId, CCId, Monto) VALUES (?, ?, ?)");
+                    $stmt->execute([$facturaId, self::CC_INTERES_ID, $interes]);
+
+                    // Actualizar Total
+                    $monto += $interes;
+                    $this->db->prepare("UPDATE Factura SET TotalAPagarFinal = ? WHERE FacturaId = ?")
+                             ->execute([$monto, $facturaId]);
+                }
             }
 
-            // 2. Actualizar Factura (Total Final y Estado)
-            $sqlFactura = "UPDATE Factura SET Estado = :pagado, TotalAPagarFinal = :total WHERE FacturaId = :fid";
-            $stmtF = $this->db->prepare($sqlFactura);
-            $stmtF->bindValue(':pagado', self::ESTADO_PAGADO);
-            $stmtF->bindValue(':total', $montoPagar);
-            $stmtF->bindValue(':fid', $facturaId);
-            $stmtF->execute();
-
-            // 3. Crear Registro de Pago
+            // 2. Registrar Pago
             $sqlPago = "INSERT INTO Pago (FacturaId, FechaPago, TipoMedioPagoId, NumeroReferencia, MontoPagado) 
-                        VALUES (:fid, CAST(GETDATE() AS DATE), :mediopago, :ref, :monto)";
-            $stmtP = $this->db->prepare($sqlPago);
-            $stmtP->bindValue(':fid', $facturaId);
-            $stmtP->bindValue(':mediopago', $tipoMedioPagoId);
-            $stmtP->bindValue(':ref', $numeroReferencia);
-            $stmtP->bindValue(':monto', $montoPagar);
-            $stmtP->execute();
-
+                        VALUES (?, CAST(GETDATE() AS DATE), ?, ?, ?)";
+            $this->db->prepare($sqlPago)->execute([$facturaId, $medioPagoId, $referencia, $monto]);
             $pagoId = $this->db->lastInsertId();
 
-            // 4. Crear Comprobante de Pago
-            // Se usa el mismo número de referencia del pago para el comprobante o uno nuevo
+            // 3. Comprobante
             $sqlComp = "INSERT INTO ComprobantePago (PagoId, Fecha, NumeroReferencia, Monto) 
-                        VALUES (:pid, CAST(GETDATE() AS DATE), :ref, :monto)";
-            $stmtC = $this->db->prepare($sqlComp);
-            $stmtC->bindValue(':pid', $pagoId);
-            $stmtC->bindValue(':ref', $numeroReferencia); // Código aleatorio generado en la vista
-            $stmtC->bindValue(':monto', $montoPagar);
-            $stmtC->execute();
+                        VALUES (?, CAST(GETDATE() AS DATE), ?, ?)";
+            $this->db->prepare($sqlComp)->execute([$pagoId, $referencia, $monto]);
+
+            // 4. Actualizar Estado Factura
+            $this->db->prepare("UPDATE Factura SET Estado = 2 WHERE FacturaId = ?")->execute([$facturaId]);
+
+            // 5. Gestionar Reconexión (si aplica)
+            $this->procesarReconexion($facturaId);
 
             $this->db->commit();
-
-            $msg = "Pago realizado con éxito. Monto: ₡" . number_format($montoPagar, 2);
-            if($hayInteres) $msg .= " (Incluye intereses por mora: ₡" . number_format($interesAplicado, 2) . ")";
-
-            return ['success' => true, 'message' => $msg, 'comprobante' => $numeroReferencia];
+            return ['success' => true, 'message' => "Pago exitoso. Total cobrado: ₡" . number_format($monto, 2)];
 
         } catch (Exception $e) {
             $this->db->rollBack();
-            return ['success' => false, 'message' => 'Error en transacción: ' . $e->getMessage()];
+            return ['success' => false, 'message' => 'Error SQL: ' . $e->getMessage()];
+        }
+    }
+
+    private function procesarReconexion($facturaId) {
+        // Verifica si esta factura tenía orden de corte
+        $sql = "SELECT OrdenCorteId FROM OrdenCorte WHERE FacturaId = ? AND Estado = 1";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([$facturaId]);
+        $corte = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($corte) {
+            // Crear reconexión
+            $sqlRec = "INSERT INTO OrdenReconexion (OrdenCorteId, FechaReconexion) VALUES (?, CAST(GETDATE() AS DATE))";
+            $this->db->prepare($sqlRec)->execute([$corte['OrdenCorteId']]);
+            // Cerrar orden de corte
+            $this->db->prepare("UPDATE OrdenCorte SET Estado = 2 WHERE OrdenCorteId = ?")
+                     ->execute([$corte['OrdenCorteId']]);
         }
     }
 }
+?>
