@@ -8,6 +8,9 @@ BEGIN
     );
 END;
 
+-- Limpia la tabla si quieres cargar el XML nuevamente
+TRUNCATE TABLE dbo.XML_Input;
+
 DECLARE @xmlText NVARCHAR(MAX);
 SET @xmlText = N'';
 
@@ -1614,21 +1617,7 @@ SET @xmlText = @xmlText + N'<Operaciones>
 </FechaOperacion>
 </Operaciones>';
 
--- AQUÍ IRÍA EL RESTO DEL XML COMPLETO (Propiedades, PropiedadPersona, CCPropiedad, LecturasMedidor, Pagos, etc.)
--- Para que todo esté cargado, habría que continuar concatenando el resto del XML con más:
--- SET @xmlText = @xmlText + N'...';
--- usé solo la parte de <Personas> arriba para que puedas probar el flujo sin explotar SSMS.
-
--- Insertar el XML (aunque sea parcial en esta prueba) en la tabla puente
 INSERT INTO dbo.XML_Input(XmlData)
-VALUES (CAST(@xmlText AS XML));
+VALUES (@xmlText);
 
--- Tomar el último XML cargado
-DECLARE @xml XML;
-SELECT TOP (1) @xml = XmlData FROM dbo.XML_Input ORDER BY Id DESC;
-
--- Ejecutar tu SP de personas
-EXEC dbo.SP_InsertarPersonasXML @XML = @xml;
-
--- Verificar que ahora sí tengas datos en Persona
-SELECT TOP (10) * FROM dbo.Persona;
+SELECT TOP(1) * FROM dbo.XML_Input;
