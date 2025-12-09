@@ -3,115 +3,160 @@ require_once __DIR__ . '/../db_connect.php';
 require_once __DIR__ . '/../controllers/FacturacionController.php'; 
 session_start();
 
-// Verificación de seguridad
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
-    header('Location: ../index.php');
-    exit;
-}
+if (!isset($_SESSION['user_id'])) { header('Location: ../index.php'); exit; }
 
-$page_title = "Pagar Facturas Pendientes";
-$finca = $_REQUEST['finca'] ?? ''; // Soporta GET y POST para mantener el valor
+$finca = $_GET['finca'] ?? '';
 $mensaje = '';
 $tipoMensaje = '';
-$factura = null;
+$controller = new FacturacionController($db_conn); // Instanciamos el controlador
 
-$controller = new FacturacionController($db_conn);
-
-// --- PROCESAR PAGO (POST) ---
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['accion']) && $_POST['accion'] === 'pagar') {
+// --- PROCESAR PAGO ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pagar'])) {
     $medioPago = $_POST['medio_pago'] ?? 1;
-    // Generar código aleatorio de comprobante
-    $referencia = 'COMP-' . strtoupper(bin2hex(random_bytes(4))); 
-    
-    $resultado = $controller->pagarFacturaMasVieja($finca, $medioPago, $referencia);
+    $fincaPagar = $_POST['finca_pagar']; 
+
+    $resultado = $controller->pagarFacturaMasVieja($fincaPagar, $medioPago, 'WEB-'.uniqid());
     
     if ($resultado['success']) {
         $mensaje = $resultado['message'];
-        $tipoMensaje = 'success';
-        // No buscamos factura de nuevo inmediatamente para mostrar el mensaje limpio
+        $tipoMensaje = "success";
     } else {
         $mensaje = $resultado['message'];
-        $tipoMensaje = 'danger';
+        $tipoMensaje = "danger";
     }
 }
 
-// --- BUSCAR FACTURA (GET/POST si no hay éxito previo) ---
-if (!empty($finca) && $tipoMensaje !== 'success') {
-    $factura = $controller->getFacturaMasViejaPendiente($finca);
-    if (!$factura) {
-        $mensaje = "No se encontraron facturas pendientes para la finca: " . htmlspecialchars($finca);
-        $tipoMensaje = 'warning';
-    }
+// --- CONSULTAR DATOS ---
+$listaFacturas = [];
+$facturaPagar = null;
+
+if ($finca) {
+    // 1. Obtener LISTA COMPLETA para mostrar al usuario
+    $listaFacturas = $controller->getTodasFacturasPendientes($finca);
+    
+    // 2. Obtener la MÁS VIEJA para procesar el pago (usamos la lógica que ya tenías)
+    // Nota: Podríamos sacar esto del primer elemento de $listaFacturas[0] para optimizar,
+    // pero mantenemos tu llamada al SP para asegurar consistencia con el cálculo de mora del SP.
+    try {
+        $sql = "EXEC SP_GetFacturaPendiente @NumeroFinca = :finca";
+        $stmt = $db_conn->prepare($sql);
+        $stmt->bindParam(':finca', $finca);
+        $stmt->execute();
+        $facturaPagar = $stmt->fetch(PDO::FETCH_ASSOC);
+    } catch (Exception $e) { /* Error silencioso */ }
 }
 
 include 'partials/header.php';
 ?>
 
 <div class="container">
-    <h1>Gestión de Pagos</h1>
+    <h1>Facturación Pendiente</h1>
     
-    <!-- Buscador -->
-    <div class="card">
-        <form method="GET" action="facturas_pendientes.php">
-            <div class="form-group">
-                <label>Número de Finca:</label>
-                <input type="text" name="finca" value="<?php echo htmlspecialchars($finca); ?>" placeholder="Ej: F-0001" required>
-            </div>
-            <button type="submit" class="btn btn-primary">Buscar Facturas</button>
-        </form>
-    </div>
+    <?php if (!$finca): ?>
+        <div class="card">
+            <form action="facturas_pendientes.php" method="GET">
+                <label>Ingrese Finca:</label>
+                <input type="text" name="finca" placeholder="Ej: F-0001">
+                <button type="submit" class="btn btn-primary" style="margin-top:10px;">Buscar</button>
+            </form>
+        </div>
+    <?php endif; ?>
 
-    <!-- Mensajes -->
     <?php if ($mensaje): ?>
-        <div class="alert alert-<?php echo $tipoMensaje; ?>" style="margin-top: 20px;">
-            <?php echo htmlspecialchars($mensaje); ?>
-        </div>
-    <?php endif; ?>
-
-    <!-- Detalle de Factura a Pagar -->
-    <?php if ($factura): 
-        $diasMora = $factura['DiasMora'];
-        $monto = $factura['MontoActual'];
-        // Cálculo visual de intereses (solo informativo, el real lo hace el controlador)
-        $interesEstimado = ($diasMora > 0) ? ($monto * 0.001333 * $diasMora) : 0;
-        $totalEstimado = $monto + $interesEstimado;
-    ?>
-    <div class="card" style="margin-top: 20px; border-left: 5px solid var(--primary-color);">
-        <h2>Factura Más Antigua Pendiente</h2>
-        <div class="info-grid">
-            <p><strong>ID Factura:</strong> <?php echo $factura['FacturaId']; ?></p>
-            <p><strong>Fecha Emisión:</strong> <?php echo $factura['FechaFactura']; ?></p>
-            <p><strong>Fecha Vencimiento:</strong> <?php echo $factura['FechaLimitePago']; ?></p>
-            <p><strong>Días de Mora:</strong> <?php echo $diasMora > 0 ? "<span style='color:red'>$diasMora días</span>" : "Al día"; ?></p>
-            <p><strong>Monto Original:</strong> ₡<?php echo number_format($factura['TotalAPagarOriginal'], 2); ?></p>
-        </div>
-
-        <hr>
-        <h3>Total a Pagar: ₡<?php echo number_format($totalEstimado, 2); ?></h3>
-        <?php if($diasMora > 0): ?>
-            <small style="color: red;">* Incluye intereses moratorios estimados.</small>
+        <div class="alert alert-<?php echo $tipoMensaje; ?>"><?php echo $mensaje; ?></div>
+        <?php if ($tipoMensaje == 'success'): ?>
+             <a href="propiedades.php" class="btn btn-primary">Volver a Propiedades</a>
+             <?php if(count($listaFacturas) > 1): ?>
+                <a href="facturas_pendientes.php?finca=<?php echo $finca; ?>" class="btn">Pagar Siguiente</a>
+             <?php endif; ?>
         <?php endif; ?>
-
-        <!-- Formulario de Pago -->
-        <form method="POST" action="facturas_pendientes.php" style="margin-top: 20px;">
-            <input type="hidden" name="accion" value="pagar">
-            <input type="hidden" name="finca" value="<?php echo htmlspecialchars($finca); ?>">
-            
-            <div class="form-group">
-                <label>Medio de Pago:</label>
-                <select name="medio_pago">
-                    <option value="1">Efectivo</option>
-                    <option value="2">Tarjeta</option>
-                </select>
-            </div>
-
-            <button type="submit" class="btn btn-primary" style="background-color: var(--success-color);">
-                Confirmar Pago
-            </button>
-        </form>
-    </div>
     <?php endif; ?>
 
+    <?php if (!empty($listaFacturas) && empty($mensaje)): ?>
+        <div class="card">
+            <h3>Estado de Cuenta: Finca <?php echo htmlspecialchars($finca); ?></h3>
+            <p>Se encontraron <strong><?php echo count($listaFacturas); ?></strong> facturas pendientes.</p>
+            
+            <table style="width:100%; border-collapse: collapse; margin-top:10px;">
+                <thead style="background:#f8f9fa; text-align:left;">
+                    <tr>
+                        <th style="padding:10px; border-bottom:2px solid #ddd;"># Factura</th>
+                        <th style="padding:10px; border-bottom:2px solid #ddd;">Vencimiento</th>
+                        <th style="padding:10px; border-bottom:2px solid #ddd;">Monto Original</th>
+                        <th style="padding:10px; border-bottom:2px solid #ddd;">Estado Mora</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($listaFacturas as $index => $f): ?>
+                        <tr style="<?php echo $index === 0 ? 'background-color:#e8f4fd; font-weight:bold;' : ''; ?>">
+                            <td style="padding:10px; border-bottom:1px solid #eee;">
+                                <?php echo $f['FacturaId']; ?> 
+                                <?php if($index === 0) echo '<span style="color:#0056b3; font-size:0.8em;">(A Pagar)</span>'; ?>
+                            </td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;"><?php echo $f['FechaLimitePago']; ?></td>
+                            <td style="padding:10px; border-bottom:1px solid #eee;">₡<?php echo number_format($f['TotalAPagarFinal'], 2); ?></td>
+                            <td style="padding:10px; border-bottom:1px solid #eee; color: <?php echo $f['DiasMora'] > 0 ? 'red' : 'green'; ?>;">
+                                <?php echo $f['DiasMora'] > 0 ? $f['DiasMora'] . ' días atraso' : 'Al día'; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+
+    <?php if ($facturaPagar && empty($mensaje)): 
+        $montoBase = $facturaPagar['MontoActual'];
+        $diasMora = $facturaPagar['DiasMora'];
+        $interesEstimado = 0;
+        if ($diasMora > 0) {
+            $interesEstimado = $montoBase * (0.04 / 30) * $diasMora;
+        }
+        $totalPagar = $montoBase + $interesEstimado;
+    ?>
+        <div class="card" style="border-left: 5px solid #0056b3; margin-top: 20px;">
+            <h2 style="color: #0056b3;">Pagar Factura #<?php echo $facturaPagar['FacturaId']; ?></h2>
+            
+            <div style="background-color: #f1f3f5; padding: 20px; margin: 20px 0; border-radius: 8px;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                    <span>Subtotal Factura:</span>
+                    <strong>₡<?php echo number_format($montoBase, 2); ?></strong>
+                </div>
+                <?php if ($diasMora > 0): ?>
+                <div style="display: flex; justify-content: space-between; color: #dc3545; margin-bottom: 5px;">
+                    <span>+ Intereses Moratorios (<?php echo $diasMora; ?> días):</span>
+                    <strong>₡<?php echo number_format($interesEstimado, 2); ?></strong>
+                </div>
+                <?php endif; ?>
+                <hr>
+                <div style="display: flex; justify-content: space-between; font-size: 1.2rem; color: #0056b3;">
+                    <strong>TOTAL A PAGAR:</strong>
+                    <strong>₡<?php echo number_format($totalPagar, 2); ?></strong>
+                </div>
+            </div>
+            
+            <form method="POST" action="facturas_pendientes.php?finca=<?php echo $finca; ?>">
+                <input type="hidden" name="finca_pagar" value="<?php echo $finca; ?>">
+                <input type="hidden" name="pagar" value="1">
+                
+                <div class="form-group">
+                    <label>Seleccione Medio de Pago:</label>
+                    <select name="medio_pago">
+                        <option value="1">Efectivo</option>
+                        <option value="2">Tarjeta de Crédito/Débito</option>
+                    </select>
+                </div>
+
+                <div style="text-align: right; margin-top: 20px;">
+                    <a href="propiedades.php" class="btn" style="background:#6c757d; color:white; margin-right:10px;">Cancelar</a>
+                    <button type="submit" class="btn btn-primary">Confirmar Pago</button>
+                </div>
+            </form>
+        </div>
+    <?php elseif ($finca && empty($listaFacturas) && empty($mensaje)): ?>
+        <div class="alert alert-success">¡Excelente! Esta propiedad está al día.</div>
+        <a href="propiedades.php" class="btn btn-primary">Volver</a>
+    <?php endif; ?>
 </div>
 
 <?php include 'partials/footer.php'; ?>

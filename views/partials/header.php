@@ -28,7 +28,6 @@ $username = htmlspecialchars($_SESSION['username'] ?? 'Administrador');
             <a href="dashboard.php">Inicio</a>
             <a href="propiedades.php">Consulta de Propiedades</a>
             <a href="facturas_pendientes.php">Facturas Pendientes</a>
-            <a href="proceso_xml.php">Proceso XML</a>
             <a href="logout.php" style="color: var(--danger-color);">Cerrar Sesión (<?php echo $username; ?>)</a>
         </nav>
     </header>

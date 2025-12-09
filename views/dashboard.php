@@ -35,13 +35,6 @@ include 'partials/header.php';
             <!-- En el paso 4 implementaremos facturas_pendientes.php -->
             <a href="facturas_pendientes.php" class="btn btn-primary" style="width: auto;">Ver Facturas</a>
         </div>
-
-        <div class="card">
-            <h2>Procesos Masivos</h2>
-            <p>Ejecuta el proceso manual de facturación o carga y procesamiento del archivo XML.</p>
-            <!-- En el paso 6 implementaremos proceso_xml.php -->
-            <a href="proceso_xml.php" class="btn btn-primary" style="width: auto;">Ejecutar Procesos</a>
-        </div>
         
     </div>
     

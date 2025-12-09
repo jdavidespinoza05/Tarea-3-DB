@@ -99,5 +99,30 @@ class FacturacionController {
                      ->execute([$corte['OrdenCorteId']]);
         }
     }
+
+public function getTodasFacturasPendientes($numeroFinca) {
+        $sql = "
+            SELECT 
+                F.FacturaId, 
+                FORMAT(F.FechaFactura, 'yyyy-MM-dd') as FechaFactura, 
+                FORMAT(F.FechaLimitePago, 'yyyy-MM-dd') as FechaLimitePago, 
+                F.TotalAPagarFinal,
+                DATEDIFF(day, F.FechaLimitePago, GETDATE()) AS DiasMora
+            FROM Factura F
+            JOIN Propiedad P ON F.PropiedadId = P.PropiedadId
+            WHERE P.NumeroFinca = :finca AND F.Estado = 1
+            ORDER BY F.FechaLimitePago ASC -- La más vieja primero
+        ";
+        try {
+            $stmt = $this->db->prepare($sql);
+            $stmt->bindParam(':finca', $numeroFinca);
+            $stmt->execute();
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            return [];
+        }
+    }
 }
+
+
 ?>
